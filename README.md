@@ -43,7 +43,7 @@ Using a decision tree, we segmented users into eight distinct groups based on se
 
  ![image](https://github.com/user-attachments/assets/2e57c904-94ba-4ebe-a98e-3d3972a07c30)
 
-## Insights
+## E. Insights
 1.	Active User Engagement:
 o	Out of the 5,998 active users, Backpackers (1,526) followed by Couples with no Children (1,276) are the majority respectively.
 o	A sizeable traffic (435) on our platform comes from visitors  then senior and potential client cohorts.
@@ -51,7 +51,7 @@ o	Users show distinct preferences, providing opportunities for targeted marketin
 2.	Traveler Preferences:
 o	Different user groups have unique travel and booking behaviour.
 o	Customized rewards can enhance user satisfaction and retention.
-## Recommendations
+## F. Recommendations
 The insights from this study provide a first approach with a limited data foundation. A future validation of the results is needed. Nevertheless, we recommend the following interim action points: 
 1.	User Retention Strategies:
 o	Focus on retaining active users with regular updates on perks and offers.
@@ -66,5 +66,5 @@ o	Partner with socially responsible institutions to distribute discount codes.
 o	Regularly analyze user behaviour and feedback to refine the segmentation strategy.
 o	Conduct A/B testing of different perks and rewards to determine the most effective strategies for each traveller type.
 
-## Remarks
+## G. Remarks
 By leveraging these insights and recommendations, TravelTide can significantly enhance user engagement, retention, and growth, ensuring a more personalized and rewarding experience for its diverse user base. 
