@@ -1,0 +1,172 @@
+---This is a main querry from which the session and users data base can be extarcted
+--Joining tables to build a session table based on the marketing managers suggestion or requirement 
+---[time frame is after 2023-01-04 and customers with more than 7 sessions]
+--Now Elena requirement for cohort selection
+
+WITH sessions_2023 AS 
+(	
+  SELECT *
+ 	FROM sessions s
+  WHERE s.session_start >= '2023-01-04' --reduces the session table to the necessary time frame
+),
+
+filtered_user AS
+(
+  SELECT user_id, COUNT(*) 
+  FROM sessions_2023
+  GROUP BY user_id
+  HAVING COUNT(*) > 7  --isolates those with less than 8 sessions from the table. a continuation of further characterisation of customer session
+),
+
+--The above is the main session table for which other tables are joined to form the session base table
+--The night column is cleaned because it contained the negative values which could affect future cost calculations
+session_base AS 
+(SELECT s.session_id, s.user_id, s.trip_id, s.session_start, s.session_end, EXTRACT(EPOCH FROM s.session_end-s.session_start) as session_duration, s.page_clicks,
+ s.flight_discount, s.flight_discount_amount, s.hotel_discount, s.hotel_discount_amount, s.flight_booked, s.hotel_booked, s.cancellation,
+ u.birthdate, u.gender, u.married, u.has_children, u.home_country, u.home_city, u.home_airport, u.home_airport_lat, u.home_airport_lon,u.sign_up_date,
+ f.origin_airport, f.destination, f.destination_airport, f.seats, f.return_flight_booked, f.departure_time, f.return_time, f.checked_bags, f.trip_airline, 
+ f.destination_airport_lat, f.destination_airport_lon,f.base_fare_usd,
+ h.hotel_name, CASE WHEN h.nights < 0 THEN 1 ELSE h.nights END AS nights, h.rooms, h.check_in_time, h.check_out_time, h.hotel_per_room_usd AS hotel_price_per_room_night_usd
+ FROM sessions_2023 s
+ 	LEFT JOIN users u
+  ON s.user_id = u.user_id
+  LEFT JOIN flights f
+  ON s.trip_id = f.trip_id
+  LEFT JOIN hotels h
+  ON s.trip_id = h.trip_id
+   WHERE s.user_id IN (SELECT user_id FROM filtered_user
+)),
+
+--Further to the session data base, we pull for the sessions that has canceled trips or otherwise.
+-- Trips (ids) that has been canceled through a session are identified and used to filter-out all cancelled trips
+canceled_trips AS (
+  SELECT trip_id
+  FROM session_base
+  WHERE cancellation = TRUE
+),
+
+--All sessions without trips are dropped
+not_canceled_trips AS(
+  SELECT *, base_fare_usd
+  FROM session_base
+	WHERE trip_id IS NOT NULL
+	AND trip_id NOT IN (SELECT trip_id FROM canceled_trips)
+),
+
+-- Row per user aggregated and grouped to get users information
+-- this code below gives the browsing behaviour Matrix of our customers since it contains both cancelled and not cancelled trips
+user_base_session AS
+(
+  SELECT  user_id, SUM(base_fare_usd) as Base_flight_fare,
+  	SUM(page_clicks) AS num_clicks,--total no.of page clicks during browsing session 
+  	COUNT(DISTINCT session_id) AS num_session, --no.of page visits
+  	AVG(session_duration) AS avg_session_duration, 
+  	SUM(seats) AS num_seats, --total no.of seats booked per flight  
+  	SUM(rooms) AS num_rooms,--total no.of hotel rooms booked
+		SUM(checked_bags) AS num_bags,--total no.of bags 	
+  	COUNT(user_id) AS total_trips --total no.of intended trips per user
+  	FROM session_base
+GROUP BY user_id
+),
+
+-- this code below gives the travel behaviour Matrix of our customers 
+user_base_trip AS
+(
+  SELECT user_id, 
+  	COUNT(DISTINCT trip_id) AS num_trips, 
+ 		SUM(CASE WHEN (flight_booked = TRUE) AND (return_flight_booked = TRUE) THEN 2 WHEN flight_booked = TRUE THEN 1 ELSE 0 END) AS num_flights,
+		COALESCE((SUM((hotel_price_per_room_night_usd * nights * rooms) * (1 - (CASE WHEN hotel_discount_amount IS NULL THEN 0 ELSE hotel_discount_amount END)))),0) AS money_spend_hotel,
+		AVG(EXTRACT(DAY FROM departure_time-session_end)) AS time_after_booking,
+		AVG(haversine_distance(home_airport_lat, home_airport_lon, destination_airport_lat, destination_airport_lon)) AS total_km_flown
+ 	FROM not_canceled_trips
+	GROUP BY user_id                                                       
+),
+
+-- The final user table is a joined table of travel matrix, browsing metrix, and the general session table
+user_table AS
+(SELECT b.*,
+EXTRACT(YEAR FROM AGE(u.birthdate)) AS age, u.gender, u.married, u.has_children, u.home_country, u.home_city, u.home_airport,
+t.*
+FROM user_base_session b
+LEFT JOIN users u
+ON b.user_id = u.user_id
+LEFT JOIN user_base_trip t
+ON b.user_id = t.user_id),
+
+finaltable as --codes below uses hard coded values (median, lower quartile etc) obtained  after performing EDA with Tableau
+(SELECT *,
+			--segment1
+      CASE 
+      	WHEN num_trips > 0 --our users who booked flight from our page
+      		THEN --'travelers'
+          	CASE 
+            	WHEN age < 60 AND married = 'true' 
+               THEN --'couples'
+               	CASE
+                	WHEN has_children = 'true' 
+                  	THEN 'Couple_with_children'
+                  WHEN has_children = 'false'
+                  	THEN 'Couple_no_children'
+                    END
+               WHEN  married = 'false' AND has_children = 'true'
+               	THEN 'Single_parents'
+               WHEN age > 60 --mean/average retirement age of customers//very moderate to account for early retirees
+                THEN 'Seniors'
+               ELSE 
+               		CASE --'solo travellers'
+                  	WHEN num_rooms=1 OR num_trips > 4.5----lower whisker OR num_trips > median
+                    	THEN 'Business travelers'
+                    ELSE 'Backpackers'
+                       END 
+                 END
+      		ELSE --'dreamers'
+          	CASE 
+            	WHEN num_session > 9 OR num_clicks > 139 --num_session > median OR num_clicks > median~from Tableau EDA
+              	THEN 'Potential clients'
+              	ELSE 'Active visitors'
+              END
+      END
+      AS segment1,
+			--perk1
+      CASE 
+      	WHEN num_trips > 0
+      		THEN --'travelers'
+          	CASE 
+            	WHEN age < 60 AND married = 'true' 
+               THEN --'couples'
+               	CASE
+                	WHEN has_children = 'true' 
+                  	THEN 'free checked bags'--couple_with_children
+                  WHEN has_children = 'false'
+                  	THEN 'spa discount 20%'--couple_no_children'
+                    END
+               WHEN  married = 'false' AND has_children = 'true'
+               	THEN 'single parent discount 15%'--single_parents
+               WHEN age > 60 --mean/average retirement age of customers//very moderate to account for early retirees
+                THEN 'cultural tours'--seniors
+               ELSE 
+               		CASE --'solo travellers'
+                  	WHEN num_rooms =1 OR num_trips > 4.5--lower whisker  OR num_trips > median~from Tableau EDA
+                    	THEN 'free hotel meal'--business travelers
+                    ELSE 'adventure packages'--backpackers
+                       END 
+                 END
+      		ELSE --'dreamers'
+          	CASE 
+            	WHEN num_session > 9 OR num_clicks > 139 --num_session > median OR num_clicks > median~from Tableau EDA
+              	THEN 'welcome discount 30%'--'potential clients'
+              	ELSE 'discount codes'--visitors ie voucher from sponsors
+              END
+      END
+      AS perk1
+
+FROM user_table)
+
+SELECT * 
+FROM finaltable
+
+/*select count(perk1), perk1, group1
+from finaltable
+group by perk1, group1*/
+
+
